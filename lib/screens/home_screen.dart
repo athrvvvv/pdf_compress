@@ -343,13 +343,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.compress, color: AppTheme.primaryColor, size: 22),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset('assets/logo.png', width: 28, height: 28, fit: BoxFit.contain),
             ),
             const SizedBox(width: 10),
             const Text('Smart PDF Compressor'),
