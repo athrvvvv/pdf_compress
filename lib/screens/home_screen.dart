@@ -60,7 +60,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Future<void> _pickFile() async {
     final file = await FileService.pickPdfFile();
-    if (file != null) {
+    if (file != null && mounted) {
       final size = await file.length();
       final pages = await PdfCompressorService.getPageCount(file.path);
       setState(() {
@@ -79,8 +79,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       return;
     }
 
+    if (!await _selectedFile!.exists()) {
+      _showSnackBar('Selected file no longer exists. Please pick again.', isError: true);
+      return;
+    }
+
     final targetBytes = _computedTargetSizeBytes;
-    if (targetBytes <= 1024 * 10) {
+    if (targetBytes <= 1024 * 5) {
       _showSnackBar('Please enter a target size of at least 10 KB.', isError: true);
       return;
     }
@@ -125,7 +130,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _saveToDownloads() async {
-    if (_lastResult == null || !_lastResult!.success) return;
+    if (_lastResult == null || !_lastResult!.success) {
+      _showSnackBar('No compressed PDF available to save.', isError: true);
+      return;
+    }
 
     final baseName = p.basenameWithoutExtension(_selectedFile!.path);
     final targetKb = (_computedTargetSizeBytes / 1024).round();
@@ -141,7 +149,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _shareFile() async {
-    if (_lastResult == null || !_lastResult!.success) return;
+    if (_lastResult == null || !_lastResult!.success) {
+      _showSnackBar('No compressed PDF available to share.', isError: true);
+      return;
+    }
+
     await FileService.sharePdf(
       _lastResult!.compressedFile.path,
       text: 'Compressed PDF (${_lastResult!.compressedSizeFormatted})',
@@ -149,10 +161,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _openFile() async {
-    if (_lastResult == null || !_lastResult!.success) return;
+    if (_lastResult == null || !_lastResult!.success) {
+      _showSnackBar('No compressed PDF available to preview.', isError: true);
+      return;
+    }
+
     final success = await FileService.openPdf(_lastResult!.compressedFile.path);
     if (!success) {
-      _showSnackBar('No PDF viewer app found on device.', isError: true);
+      // Fallback: share the file if no dedicated viewer responds
+      await FileService.sharePdf(_lastResult!.compressedFile.path);
     }
   }
 

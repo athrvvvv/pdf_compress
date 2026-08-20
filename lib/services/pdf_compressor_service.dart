@@ -49,9 +49,6 @@ class PdfCompressorService {
       final budgetPerPage = ((availableBudget * 0.992) / pageCount).floor();
 
       // Dynamically calculate render DPI scale:
-      // High budget (500KB - 1MB+) -> 3.3x (240+ DPI scanner quality)
-      // Medium budget (200KB - 500KB) -> 2.6x - 3.2x (180 - 230 DPI)
-      // Lower budget (< 150KB) -> 1.8x - 2.2x
       final renderScale = math.sqrt(budgetPerPage / 42000).clamp(2.0, 3.5);
 
       final List<Uint8List> compressedPages = [];
@@ -117,15 +114,22 @@ class PdfCompressorService {
         pdfBytes = await _buildPdfDocument(refinedPages, pageFormats);
       }
 
-      onProgress?.call(0.98, 'Saving...');
+      onProgress?.call(0.98, 'Saving persistent file...');
 
-      final tempDir = await getTemporaryDirectory();
+      // Save to persistent app documents directory (NEVER purged by low storage manager)
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final outputDir = Directory('${appDocDir.path}/compressed_pdfs');
+      if (!await outputDir.exists()) {
+        await outputDir.create(recursive: true);
+      }
+
       final baseName = p.basenameWithoutExtension(inputFile.path);
       final targetKbFormatted = (targetSizeBytes / 1024).round();
-      final outputFileName = '${baseName}_compressed_${targetKbFormatted}kb.pdf';
-      final outputFile = File('${tempDir.path}/$outputFileName');
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final outputFileName = '${baseName}_compressed_${targetKbFormatted}kb_$timestamp.pdf';
+      final outputFile = File('${outputDir.path}/$outputFileName');
 
-      await outputFile.writeAsBytes(pdfBytes);
+      await outputFile.writeAsBytes(pdfBytes, flush: true);
 
       stopwatch.stop();
       onProgress?.call(1.0, 'Done!');
@@ -197,9 +201,7 @@ class _OptimizationTask {
   });
 }
 
-/// Exact integer binary search for maximum sharpness and highest target budget fill:
 Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
-  // If original high-res already fits inside budget, keep 100% full quality!
   if (task.highResJpegBytes.length <= task.budgetBytes) {
     return task.highResJpegBytes;
   }
@@ -227,21 +229,17 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
         bestFullResSize = encoded.length;
         bestFullResBytes = encoded;
       }
-      // Try higher quality closer to budget limit
       lowQ = midQ + 1;
     } else {
-      // Too big, decrease quality
       highQ = midQ - 1;
     }
   }
 
-  // If full resolution at quality >= 40 fits and fills >= 75% of budget, use it!
-  // This preserves 100% native pixels!
   if (bestFullResBytes != null && bestFullResSize >= (task.budgetBytes * 0.75)) {
     return bestFullResBytes;
   }
 
-  // Step 2: If full resolution was too large for the budget, calculate required scale directly
+  // Step 2: Scale estimate
   final baselineSize = bestFullResSize > 0 ? bestFullResSize : task.highResJpegBytes.length;
   final scaleFactor = math.sqrt(task.budgetBytes / baselineSize).clamp(0.30, 0.95);
 
@@ -255,7 +253,6 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
     interpolation: img.Interpolation.linear,
   );
 
-  // Exact binary search on quality for the resized image
   int lowRQ = 40;
   int highRQ = 92;
   Uint8List? bestResizedBytes;
