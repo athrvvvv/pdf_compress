@@ -24,9 +24,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _targetUnit = 'KB'; // 'KB' or 'MB'
   int _selectedPreset = 500; // KB
 
-  // Output filename configuration
-  final TextEditingController _fileNameController = TextEditingController();
-  bool _isFileNameEdited = false;
+  // Output filename configuration (configured after compression)
+  String? _customOutputName;
 
   // Compression state
   bool _isCompressing = false;
@@ -63,16 +62,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
-  void _updateDefaultFileName(String filePath) {
-    if (!_isFileNameEdited) {
-      final baseName = p.basenameWithoutExtension(filePath);
-      // Remove any temporary prefix if present
-      final cleanBase = baseName.replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '');
-      final targetKb = (_computedTargetSizeBytes / 1024).round();
-      _fileNameController.text = '${cleanBase}_compressed_${targetKb}kb';
-    }
-  }
-
   Future<void> _handleIncomingSharedFile(String filePath) async {
     final file = await FileService.makePersistentInputFile(filePath);
     if (file != null && await file.exists()) {
@@ -84,11 +73,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _originalSizeBytes = size;
           _pageCount = pages;
           _lastResult = null;
-          _isFileNameEdited = false;
-          _updateDefaultFileName(filePath);
+          _customOutputName = null;
         });
         _animController.forward(from: 0.0);
-        _showSnackBar('Imported PDF: ${p.basename(filePath)}');
+        _showSnackBar('Imported PDF: ${_getCleanDisplayName(filePath)}');
       }
     }
   }
@@ -96,7 +84,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _targetSizeController.dispose();
-    _fileNameController.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -109,16 +96,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return (val * 1024).round();
   }
 
+  String _getCleanDisplayName(String filePath) {
+    final baseName = p.basename(filePath);
+    return baseName.replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '');
+  }
+
   String get _currentOutputName {
-    var name = _fileNameController.text.trim();
-    if (name.isEmpty) {
-      final base = _selectedFile != null
-          ? p.basenameWithoutExtension(_selectedFile!.path).replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '')
-          : 'document';
-      final targetKb = (_computedTargetSizeBytes / 1024).round();
-      name = '${base}_compressed_${targetKb}kb';
+    if (_customOutputName != null && _customOutputName!.trim().isNotEmpty) {
+      final name = _customOutputName!.trim();
+      return name.endsWith('.pdf') ? name : '$name.pdf';
     }
-    return name.endsWith('.pdf') ? name : '$name.pdf';
+
+    final base = _selectedFile != null
+        ? p.basenameWithoutExtension(_getCleanDisplayName(_selectedFile!.path))
+        : 'document';
+    final targetKb = (_computedTargetSizeBytes / 1024).round();
+    return '${base}_compressed_${targetKb}kb.pdf';
   }
 
   Future<void> _pickFile() async {
@@ -131,8 +124,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _originalSizeBytes = size;
         _pageCount = pages;
         _lastResult = null;
-        _isFileNameEdited = false;
-        _updateDefaultFileName(file.path);
+        _customOutputName = null;
       });
       _animController.forward(from: 0.0);
     }
@@ -160,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _compressionProgress = 0.05;
       _progressStatus = 'Preparing document...';
       _lastResult = null;
+      _customOutputName = null;
     });
 
     final result = await PdfCompressorService.compressPdf(
@@ -275,8 +268,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               final newName = textEdit.text.trim();
               if (newName.isNotEmpty) {
                 setState(() {
-                  _fileNameController.text = newName;
-                  _isFileNameEdited = true;
+                  _customOutputName = newName;
                 });
               }
               Navigator.pop(ctx);
@@ -333,10 +325,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               _buildFileSection(theme),
               const SizedBox(height: 16),
               _buildTargetSizeSection(theme),
-              if (_selectedFile != null) ...[
-                const SizedBox(height: 16),
-                _buildFileNameSection(theme),
-              ],
               const SizedBox(height: 24),
               _buildActionButton(theme),
               if (_isCompressing) ...[
@@ -405,8 +393,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
 
-    final rawName = p.basename(_selectedFile!.path);
-    final displayName = rawName.replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '');
+    final displayName = _getCleanDisplayName(_selectedFile!.path);
     final sizeStr = CompressionResult.formatBytes(_originalSizeBytes);
 
     return Card(
@@ -516,9 +503,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           _targetSizeController.text = kb.toString();
                           _targetUnit = 'KB';
                         }
-                        if (_selectedFile != null) {
-                          _updateDefaultFileName(_selectedFile!.path);
-                        }
                       });
                     }
                   },
@@ -550,9 +534,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     onChanged: (val) {
                       setState(() {
                         _selectedPreset = -1; // custom
-                        if (_selectedFile != null) {
-                          _updateDefaultFileName(_selectedFile!.path);
-                        }
                       });
                     },
                     decoration: const InputDecoration(
@@ -584,9 +565,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             setState(() {
                               _targetUnit = val;
                               _selectedPreset = -1;
-                              if (_selectedFile != null) {
-                                _updateDefaultFileName(_selectedFile!.path);
-                              }
                             });
                           }
                         },
@@ -595,66 +573,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
               ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFileNameSection(ThemeData theme) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.drive_file_rename_outline_rounded, size: 20, color: AppTheme.primaryColor),
-                    SizedBox(width: 8),
-                    Text(
-                      'Output File Name',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                    ),
-                  ],
-                ),
-                if (_isFileNameEdited)
-                  TextButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _isFileNameEdited = false;
-                        if (_selectedFile != null) {
-                          _updateDefaultFileName(_selectedFile!.path);
-                        }
-                      });
-                    },
-                    icon: const Icon(Icons.refresh_rounded, size: 16),
-                    label: const Text('Reset', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _fileNameController,
-              onChanged: (val) {
-                _isFileNameEdited = true;
-              },
-              decoration: const InputDecoration(
-                hintText: 'Enter output file name',
-                prefixIcon: Icon(Icons.description_outlined, size: 20),
-                suffixText: '.pdf',
-                suffixStyle: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              ),
             ),
           ],
         ),
@@ -778,30 +696,48 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
 
             const SizedBox(height: 16),
-            // Custom Name Display & Inline Rename Trigger
+
+            // Tap to Rename Output PDF Card
             InkWell(
               onTap: _showRenameDialog,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
+                  color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.25)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.insert_drive_file_outlined, size: 18, color: AppTheme.primaryColor),
-                    const SizedBox(width: 8),
+                    const Icon(Icons.drive_file_rename_outline_rounded, size: 20, color: AppTheme.primaryColor),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        _currentOutputName,
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'File Name (Tap to Rename):',
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _currentOutputName,
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.edit_outlined, size: 16, color: AppTheme.primaryColor),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.edit_rounded, size: 16, color: AppTheme.primaryColor),
+                    ),
                   ],
                 ),
               ),
