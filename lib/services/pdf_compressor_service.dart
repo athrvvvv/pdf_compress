@@ -42,14 +42,14 @@ class PdfCompressorService {
 
       onProgress?.call(0.10, 'Analyzing $pageCount page(s) for maximum sharpness...');
 
-      // Precise PDF wrapper overhead (~1KB + 150B/page)
-      final overhead = 1024 + (pageCount * 150);
+      // Precise PDF wrapper overhead (~800 bytes + 120B/page)
+      final overhead = 800 + (pageCount * 120);
       final availableBudget = (targetSizeBytes - overhead).clamp(1024 * 5, targetSizeBytes);
-      // Target 98.2% budget allocation per page to guarantee strict ceiling compliance
-      final budgetPerPage = ((availableBudget * 0.982) / pageCount).floor();
+      // Target 99.8% allocation per page to push file right up to the ceiling
+      final budgetPerPage = ((availableBudget * 0.998) / pageCount).floor();
 
       // Dynamically calculate render DPI scale:
-      final renderScale = math.sqrt(budgetPerPage / 40000).clamp(2.0, 3.5);
+      final renderScale = math.sqrt(budgetPerPage / 38000).clamp(2.0, 3.5);
 
       final List<Uint8List> compressedPages = [];
       final List<PdfPageFormat> pageFormats = [];
@@ -76,7 +76,7 @@ class PdfCompressorService {
           throw Exception('Failed to render page $i of PDF.');
         }
 
-        // Fast integer binary search for exact target budget fill
+        // Micro-precision 99.5%+ ceiling optimizer
         final optimizedBytes = await compute(
           _exactBudgetClaritySearch,
           _OptimizationTask(
@@ -93,11 +93,11 @@ class PdfCompressorService {
       onProgress?.call(0.90, 'Assembling optimized PDF...');
       var pdfBytes = await _buildPdfDocument(compressedPages, pageFormats);
 
-      // Strict verification: If total PDF exceeds target limit by even 1 byte, fine-tune down
+      // Strict ceiling enforcement: If total PDF exceeds target limit by even 1 byte, adjust down
       if (pdfBytes.length > targetSizeBytes) {
         onProgress?.call(0.95, 'Fine-tuning exact size under ${CompressionResult.formatBytes(targetSizeBytes)}...');
         final excessRatio = targetSizeBytes / pdfBytes.length;
-        final refinedBudget = (budgetPerPage * excessRatio * 0.975).floor();
+        final refinedBudget = (budgetPerPage * excessRatio * 0.992).floor();
 
         final refinedPages = <Uint8List>[];
         for (int i = 0; i < compressedPages.length; i++) {
@@ -116,7 +116,6 @@ class PdfCompressorService {
 
       onProgress?.call(0.98, 'Saving persistent file...');
 
-      // Save to persistent app documents directory (NEVER purged by low storage manager)
       final appDocDir = await getApplicationDocumentsDirectory();
       final outputDir = Directory('${appDocDir.path}/compressed_pdfs');
       if (!await outputDir.exists()) {
@@ -201,6 +200,7 @@ class _OptimizationTask {
   });
 }
 
+/// Micro-precision optimizer targeting 99.0% - 99.8% of budgetBytes
 Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
   if (task.highResJpegBytes.length <= task.budgetBytes) {
     return task.highResJpegBytes;
@@ -214,11 +214,12 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
   final origW = originalImage.width;
   final origH = originalImage.height;
 
-  // Step 1: Integer binary search on Full Resolution (Quality 30 to 95)
-  int lowQ = 30;
+  // Step 1: Integer binary search on Full Resolution (Quality 25 to 95)
+  int lowQ = 25;
   int highQ = 95;
   Uint8List? bestFullResBytes;
   int bestFullResSize = 0;
+  int bestQ = lowQ;
 
   while (lowQ <= highQ) {
     final midQ = (lowQ + highQ) ~/ 2;
@@ -228,6 +229,7 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
       if (encoded.length > bestFullResSize) {
         bestFullResSize = encoded.length;
         bestFullResBytes = encoded;
+        bestQ = midQ;
       }
       lowQ = midQ + 1;
     } else {
@@ -235,12 +237,46 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
     }
   }
 
-  if (bestFullResBytes != null && bestFullResSize >= (task.budgetBytes * 0.75)) {
+  // If full resolution at bestQ hits >= 98.8% of budget, return immediately!
+  if (bestFullResBytes != null && bestFullResSize >= (task.budgetBytes * 0.988)) {
     return bestFullResBytes;
   }
 
-  // Step 2: Scale estimate
-  final baselineSize = bestFullResSize > 0 ? bestFullResSize : task.highResJpegBytes.length;
+  // Step 2: Micro-Scale Fine Tuning (Bridges the discrete JPEG step gap to reach 99.5%+)
+  // We test the next higher quality levels (e.g. bestQ+1, bestQ+2, bestQ+3) with micro-scale adjustment
+  Uint8List? bestMicroBytes = bestFullResBytes;
+  int bestMicroSize = bestFullResSize;
+
+  for (int qTest = math.min(bestQ + 1, 95); qTest <= math.min(bestQ + 3, 95); qTest++) {
+    final oversizedEncoded = img.encodeJpg(originalImage, quality: qTest);
+    final oversizedSize = oversizedEncoded.length;
+    if (oversizedSize > task.budgetBytes) {
+      // Calculate exact scale required to fit oversized image right below budget
+      final scale = (math.sqrt(task.budgetBytes / oversizedSize) * 0.998).clamp(0.40, 0.995);
+      final targetW = (origW * scale).round();
+      final targetH = (origH * scale).round();
+
+      final scaled = img.copyResize(
+        originalImage,
+        width: targetW,
+        height: targetH,
+        interpolation: img.Interpolation.linear,
+      );
+
+      final microEncoded = Uint8List.fromList(img.encodeJpg(scaled, quality: qTest));
+      if (microEncoded.length <= task.budgetBytes && microEncoded.length > bestMicroSize) {
+        bestMicroSize = microEncoded.length;
+        bestMicroBytes = microEncoded;
+      }
+    }
+  }
+
+  if (bestMicroBytes != null && bestMicroSize >= (task.budgetBytes * 0.75)) {
+    return bestMicroBytes;
+  }
+
+  // Step 3: Larger budget reduction fallback for tiny target budgets (e.g. 50-100KB)
+  final baselineSize = bestMicroSize > 0 ? bestMicroSize : task.highResJpegBytes.length;
   final scaleFactor = math.sqrt(task.budgetBytes / baselineSize).clamp(0.30, 0.95);
 
   final targetW = (origW * scaleFactor).round();
@@ -253,7 +289,7 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
     interpolation: img.Interpolation.linear,
   );
 
-  int lowRQ = 40;
+  int lowRQ = 35;
   int highRQ = 92;
   Uint8List? bestResizedBytes;
   int bestResizedSize = 0;
@@ -274,11 +310,11 @@ Uint8List _exactBudgetClaritySearch(_OptimizationTask task) {
   }
 
   if (bestResizedBytes != null) {
-    if (bestFullResBytes != null && bestFullResSize > bestResizedSize) {
-      return bestFullResBytes;
+    if (bestMicroBytes != null && bestMicroSize > bestResizedSize) {
+      return bestMicroBytes;
     }
     return bestResizedBytes;
   }
 
-  return bestFullResBytes ?? Uint8List.fromList(img.encodeJpg(resizedImage, quality: 45));
+  return bestMicroBytes ?? Uint8List.fromList(img.encodeJpg(resizedImage, quality: 45));
 }
