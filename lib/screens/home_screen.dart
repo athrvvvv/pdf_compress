@@ -19,7 +19,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   int _originalSizeBytes = 0;
   int _pageCount = 0;
 
-  // Target size configuration
+  // Target size configuration (Decimal KB/MB)
   final TextEditingController _targetSizeController = TextEditingController(text: '500');
   String _targetUnit = 'KB'; // 'KB' or 'MB'
   int _selectedPreset = 500; // KB
@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   late AnimationController _animController;
   static const _shareChannel = MethodChannel('com.atharv.pdfcompressor/share_intent');
 
-  final List<int> _presetSizesKb = [100, 200, 500, 1024, 2048];
+  final List<int> _presetSizesKb = [100, 200, 500, 1000, 2000];
 
   @override
   void initState() {
@@ -91,9 +91,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   int get _computedTargetSizeBytes {
     final val = double.tryParse(_targetSizeController.text.trim()) ?? 500;
     if (_targetUnit == 'MB') {
-      return (val * 1024 * 1024).round();
+      return (val * 1000 * 1000).round();
     }
-    return (val * 1024).round();
+    return (val * 1000).round();
   }
 
   String _getCleanDisplayName(String filePath) {
@@ -110,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final base = _selectedFile != null
         ? p.basenameWithoutExtension(_getCleanDisplayName(_selectedFile!.path))
         : 'document';
-    final targetKb = (_computedTargetSizeBytes / 1024).round();
+    final targetKb = (_computedTargetSizeBytes / 1000).round();
     return '${base}_compressed_${targetKb}kb.pdf';
   }
 
@@ -142,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     final targetBytes = _computedTargetSizeBytes;
-    if (targetBytes <= 1024 * 5) {
+    if (targetBytes <= 1000 * 5) {
       _showSnackBar('Please enter a target size of at least 10 KB.', isError: true);
       return;
     }
@@ -487,7 +487,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               runSpacing: 8,
               children: _presetSizesKb.map((kb) {
                 final isSelected = _selectedPreset == kb;
-                final label = kb >= 1024 ? '${kb ~/ 1024} MB' : '$kb KB';
+                final label = kb >= 1000 ? '${kb ~/ 1000} MB' : '$kb KB';
 
                 return ChoiceChip(
                   label: Text(label),
@@ -496,8 +496,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     if (selected) {
                       setState(() {
                         _selectedPreset = kb;
-                        if (kb >= 1024) {
-                          _targetSizeController.text = (kb / 1024).toStringAsFixed(0);
+                        if (kb >= 1000) {
+                          _targetSizeController.text = (kb / 1000).toStringAsFixed(0);
                           _targetUnit = 'MB';
                         } else {
                           _targetSizeController.text = kb.toString();

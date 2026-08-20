@@ -19,28 +19,28 @@ class CompressionResult {
     required this.targetSizeBytes,
     required this.pageCount,
     required this.duration,
-    this.success = true,
+    required this.success,
     this.errorMessage,
   });
 
   double get reductionPercentage {
-    if (originalSizeBytes <= 0) return 0.0;
+    if (originalSizeBytes == 0) return 0.0;
     final diff = originalSizeBytes - compressedSizeBytes;
-    return (diff / originalSizeBytes) * 100;
+    return (diff / originalSizeBytes * 100).clamp(0.0, 100.0);
   }
-
-  bool get isUnderTarget => compressedSizeBytes <= targetSizeBytes;
 
   String get originalSizeFormatted => formatBytes(originalSizeBytes);
   String get compressedSizeFormatted => formatBytes(compressedSizeBytes);
   String get targetSizeFormatted => formatBytes(targetSizeBytes);
 
+  /// Consistent decimal file size formatting matching Android OS, WhatsApp, and upload portals
   static String formatBytes(int bytes) {
-    if (bytes <= 0) return '0 B';
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes <= 0) return '0 KB';
+    if (bytes < 1000 * 950) {
+      final kb = bytes / 1000.0;
+      return '${kb.toStringAsFixed(1)} KB';
     }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    final mb = bytes / 1000000.0;
+    return '${mb.toStringAsFixed(2)} MB';
   }
 }

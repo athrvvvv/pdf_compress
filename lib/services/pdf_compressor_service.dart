@@ -45,11 +45,11 @@ class PdfCompressorService {
       // Precise PDF wrapper overhead (~1KB + 150B/page)
       final overhead = 1024 + (pageCount * 150);
       final availableBudget = (targetSizeBytes - overhead).clamp(1024 * 5, targetSizeBytes);
-      // Target 99.2% budget allocation per page
-      final budgetPerPage = ((availableBudget * 0.992) / pageCount).floor();
+      // Target 98.2% budget allocation per page to guarantee strict ceiling compliance
+      final budgetPerPage = ((availableBudget * 0.982) / pageCount).floor();
 
       // Dynamically calculate render DPI scale:
-      final renderScale = math.sqrt(budgetPerPage / 42000).clamp(2.0, 3.5);
+      final renderScale = math.sqrt(budgetPerPage / 40000).clamp(2.0, 3.5);
 
       final List<Uint8List> compressedPages = [];
       final List<PdfPageFormat> pageFormats = [];
@@ -93,11 +93,11 @@ class PdfCompressorService {
       onProgress?.call(0.90, 'Assembling optimized PDF...');
       var pdfBytes = await _buildPdfDocument(compressedPages, pageFormats);
 
-      // Fine-tuning pass only if total PDF strictly exceeds target limit
+      // Strict verification: If total PDF exceeds target limit by even 1 byte, fine-tune down
       if (pdfBytes.length > targetSizeBytes) {
-        onProgress?.call(0.95, 'Fine-tuning exact size...');
+        onProgress?.call(0.95, 'Fine-tuning exact size under ${CompressionResult.formatBytes(targetSizeBytes)}...');
         final excessRatio = targetSizeBytes / pdfBytes.length;
-        final refinedBudget = (budgetPerPage * excessRatio * 0.985).floor();
+        final refinedBudget = (budgetPerPage * excessRatio * 0.975).floor();
 
         final refinedPages = <Uint8List>[];
         for (int i = 0; i < compressedPages.length; i++) {
@@ -124,7 +124,7 @@ class PdfCompressorService {
       }
 
       final baseName = p.basenameWithoutExtension(inputFile.path);
-      final targetKbFormatted = (targetSizeBytes / 1024).round();
+      final targetKbFormatted = (targetSizeBytes / 1000).round();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final outputFileName = '${baseName}_compressed_${targetKbFormatted}kb_$timestamp.pdf';
       final outputFile = File('${outputDir.path}/$outputFileName');
