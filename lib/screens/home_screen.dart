@@ -66,14 +66,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _updateDefaultFileName(String filePath) {
     if (!_isFileNameEdited) {
       final baseName = p.basenameWithoutExtension(filePath);
+      // Remove any temporary prefix if present
+      final cleanBase = baseName.replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '');
       final targetKb = (_computedTargetSizeBytes / 1024).round();
-      _fileNameController.text = '${baseName}_compressed_${targetKb}kb';
+      _fileNameController.text = '${cleanBase}_compressed_${targetKb}kb';
     }
   }
 
   Future<void> _handleIncomingSharedFile(String filePath) async {
-    final file = File(filePath);
-    if (await file.exists()) {
+    final file = await FileService.makePersistentInputFile(filePath);
+    if (file != null && await file.exists()) {
       final size = await file.length();
       final pages = await PdfCompressorService.getPageCount(file.path);
       if (mounted) {
@@ -111,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     var name = _fileNameController.text.trim();
     if (name.isEmpty) {
       final base = _selectedFile != null
-          ? p.basenameWithoutExtension(_selectedFile!.path)
+          ? p.basenameWithoutExtension(_selectedFile!.path).replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '')
           : 'document';
       final targetKb = (_computedTargetSizeBytes / 1024).round();
       name = '${base}_compressed_${targetKb}kb';
@@ -143,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     if (!await _selectedFile!.exists()) {
-      _showSnackBar('Selected file no longer exists. Please pick again.', isError: true);
+      _showSnackBar('Selected file is not accessible. Please pick it again.', isError: true);
       return;
     }
 
@@ -403,7 +405,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
 
-    final fileName = p.basename(_selectedFile!.path);
+    final rawName = p.basename(_selectedFile!.path);
+    final displayName = rawName.replaceFirst(RegExp(r'^(picked|shared)_\d+_'), '');
     final sizeStr = CompressionResult.formatBytes(_originalSizeBytes);
 
     return Card(
@@ -425,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    fileName,
+                    displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
@@ -645,12 +648,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               onChanged: (val) {
                 _isFileNameEdited = true;
               },
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Enter output file name',
-                prefixIcon: const Icon(Icons.description_outlined, size: 20),
+                prefixIcon: Icon(Icons.description_outlined, size: 20),
                 suffixText: '.pdf',
-                suffixStyle: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                suffixStyle: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               ),
             ),
           ],

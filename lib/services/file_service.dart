@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 class FileService {
-  /// Picks a single PDF file from the device storage
+  /// Picks a single PDF file and copies it to persistent storage so it is never purged
   static Future<File?> pickPdfFile() async {
     try {
       final file = await FilePicker.pickFile(
@@ -15,14 +15,44 @@ class FileService {
       );
 
       if (file != null && file.path != null) {
-        final f = File(file.path!);
-        if (await f.exists()) {
-          return f;
+        final pickedFile = File(file.path!);
+        if (await pickedFile.exists()) {
+          final appDocDir = await getApplicationDocumentsDirectory();
+          final inputDir = Directory('${appDocDir.path}/input_cache');
+          if (!await inputDir.exists()) {
+            await inputDir.create(recursive: true);
+          }
+
+          final cleanName = 'picked_${DateTime.now().millisecondsSinceEpoch}_${p.basename(file.path!)}';
+          final persistentFile = File('${inputDir.path}/$cleanName');
+          await pickedFile.copy(persistentFile.path);
+          return persistentFile;
         }
       }
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  /// Copies any shared file into persistent app storage
+  static Future<File?> makePersistentInputFile(String sourcePath) async {
+    try {
+      final src = File(sourcePath);
+      if (!await src.exists()) return null;
+
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final inputDir = Directory('${appDocDir.path}/input_cache');
+      if (!await inputDir.exists()) {
+        await inputDir.create(recursive: true);
+      }
+
+      final cleanName = 'shared_${DateTime.now().millisecondsSinceEpoch}_${p.basename(sourcePath)}';
+      final persistentFile = File('${inputDir.path}/$cleanName');
+      await src.copy(persistentFile.path);
+      return persistentFile;
+    } catch (e) {
+      return File(sourcePath);
     }
   }
 
@@ -41,8 +71,12 @@ class FileService {
       String sharePath = filePath;
       if (customName != null && customName.trim().isNotEmpty) {
         final cleanName = customName.endsWith('.pdf') ? customName.trim() : '${customName.trim()}.pdf';
-        final tempDir = await getTemporaryDirectory();
-        final renamedFile = File('${tempDir.path}/$cleanName');
+        final appDocDir = await getApplicationDocumentsDirectory();
+        final shareDir = Directory('${appDocDir.path}/share_cache');
+        if (!await shareDir.exists()) {
+          await shareDir.create(recursive: true);
+        }
+        final renamedFile = File('${shareDir.path}/$cleanName');
         await file.copy(renamedFile.path);
         sharePath = renamedFile.path;
       }
