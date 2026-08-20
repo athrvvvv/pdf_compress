@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../models/compression_result.dart';
 import '../services/file_service.dart';
@@ -29,8 +30,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _progressStatus = '';
   CompressionResult? _lastResult;
 
-  // Animation
+  // Animation & Native Method Channel
   late AnimationController _animController;
+  static const _shareChannel = MethodChannel('com.atharv.pdfcompressor/share_intent');
 
   final List<int> _presetSizesKb = [100, 200, 500, 1024, 2048];
 
@@ -41,6 +43,38 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
+
+    // Set up MethodChannel listener for incoming shared PDFs while app is running
+    _shareChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onPdfShared' && call.arguments is String) {
+        _handleIncomingSharedFile(call.arguments as String);
+      }
+    });
+
+    // Check if app was started directly with a shared PDF
+    _shareChannel.invokeMethod<String>('getSharedPdf').then((path) {
+      if (path != null && path.isNotEmpty) {
+        _handleIncomingSharedFile(path);
+      }
+    });
+  }
+
+  Future<void> _handleIncomingSharedFile(String filePath) async {
+    final file = File(filePath);
+    if (await file.exists()) {
+      final size = await file.length();
+      final pages = await PdfCompressorService.getPageCount(file.path);
+      if (mounted) {
+        setState(() {
+          _selectedFile = file;
+          _originalSizeBytes = size;
+          _pageCount = pages;
+          _lastResult = null;
+        });
+        _animController.forward(from: 0.0);
+        _showSnackBar('Imported PDF from Share: ${p.basename(filePath)}');
+      }
+    }
   }
 
   @override
@@ -168,7 +202,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     final success = await FileService.openPdf(_lastResult!.compressedFile.path);
     if (!success) {
-      // Fallback: share the file if no dedicated viewer responds
       await FileService.sharePdf(_lastResult!.compressedFile.path);
     }
   }
@@ -275,7 +308,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(height: 6),
               Text(
-                'Tap to browse files from your device',
+                'Tap to browse files or share a PDF from any app',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.grey.shade600,
                 ),
@@ -544,7 +577,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // Success Header
             Row(
               children: [
                 Container(
@@ -593,7 +625,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             const Divider(height: 1),
             const SizedBox(height: 18),
 
-            // Size Comparison Grid
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -607,7 +638,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
             const SizedBox(height: 24),
 
-            // Action Buttons: Save, Share, Open
             Row(
               children: [
                 Expanded(
