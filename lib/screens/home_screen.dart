@@ -80,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Future<void> _checkAppUpdateManually() async {
     _showSnackBar('Checking GitHub for updates...');
+    final currentVer = await UpdateService.getInstalledVersion();
     final info = await UpdateService.checkForUpdate();
     if (!mounted) return;
 
@@ -89,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
       _showUpdateDialog(info);
     } else {
-      _showSnackBar('You are using the latest version (v${UpdateService.currentVersion})! 🎉');
+      _showSnackBar('You are using the latest version (v$currentVer)! 🎉');
     }
   }
 

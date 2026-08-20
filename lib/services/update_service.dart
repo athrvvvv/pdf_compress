@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 class ReleaseInfo {
   final String tagName;
+  final String currentVersion;
   final String title;
   final String notes;
   final String apkDownloadUrl;
@@ -13,6 +15,7 @@ class ReleaseInfo {
 
   ReleaseInfo({
     required this.tagName,
+    required this.currentVersion,
     required this.title,
     required this.notes,
     required this.apkDownloadUrl,
@@ -22,13 +25,23 @@ class ReleaseInfo {
 }
 
 class UpdateService {
-  static const String currentVersion = '1.2.1';
   static const String repoOwner = 'athrvvvv';
   static const String repoName = 'pdf_compress';
+
+  /// Dynamically reads the installed app version from the platform
+  static Future<String> getInstalledVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      return info.version;
+    } catch (_) {
+      return '1.3.0';
+    }
+  }
 
   /// Checks GitHub releases for a newer version
   static Future<ReleaseInfo?> checkForUpdate() async {
     try {
+      final currentVer = await getInstalledVersion();
       final client = HttpClient();
       client.userAgent = 'SmartPDFCompressor-App';
       final request = await client.getUrl(
@@ -48,7 +61,7 @@ class UpdateService {
         String apkUrl = '';
         int apkSize = 0;
 
-        // Look for arm64 APK first, or any .apk
+        // Find arm64 APK first, or standard APK
         for (final asset in assets) {
           final name = (asset['name'] as String? ?? '').toLowerCase();
           final downloadUrl = asset['browser_download_url'] as String? ?? '';
@@ -62,10 +75,11 @@ class UpdateService {
           }
         }
 
-        final isNewer = _isVersionNewer(tagName, currentVersion);
+        final isNewer = _isVersionNewer(tagName, currentVer);
 
         return ReleaseInfo(
           tagName: tagName,
+          currentVersion: currentVer,
           title: title,
           notes: notes,
           apkDownloadUrl: apkUrl,
@@ -79,7 +93,7 @@ class UpdateService {
     return null;
   }
 
-  /// Downloads the APK and triggers the native Android installer
+  /// Downloads the APK and triggers the native Android package installer
   static Future<bool> downloadAndInstallApk(
     String downloadUrl,
     void Function(double progress, String status) onProgress,
@@ -119,7 +133,6 @@ class UpdateService {
 
         onProgress(1.0, 'Starting installer...');
 
-        // Trigger native Android package installer
         final result = await OpenFilex.open(
           updateFile.path,
           type: 'application/vnd.android.package-archive',
@@ -133,7 +146,7 @@ class UpdateService {
     return false;
   }
 
-  /// Simple semver compare: '1.3.0' > '1.2.1' -> true
+  /// Semver compare
   static bool _isVersionNewer(String latest, String current) {
     try {
       final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
