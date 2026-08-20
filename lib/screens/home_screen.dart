@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import '../models/compression_result.dart';
 import '../services/file_service.dart';
 import '../services/pdf_compressor_service.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -33,6 +34,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _progressStatus = '';
   CompressionResult? _lastResult;
 
+  // Update check state
+  ReleaseInfo? _availableUpdate;
+
   // Animation & Native Method Channel
   late AnimationController _animController;
   static const _shareChannel = MethodChannel('com.atharv.pdfcompressor/share_intent');
@@ -60,6 +64,41 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _handleIncomingSharedFile(path);
       }
     });
+
+    // Check for updates in background
+    _checkAppUpdateSilently();
+  }
+
+  Future<void> _checkAppUpdateSilently() async {
+    final info = await UpdateService.checkForUpdate();
+    if (info != null && info.hasUpdate && mounted) {
+      setState(() {
+        _availableUpdate = info;
+      });
+    }
+  }
+
+  Future<void> _checkAppUpdateManually() async {
+    _showSnackBar('Checking GitHub for updates...');
+    final info = await UpdateService.checkForUpdate();
+    if (!mounted) return;
+
+    if (info != null && info.hasUpdate) {
+      setState(() {
+        _availableUpdate = info;
+      });
+      _showUpdateDialog(info);
+    } else {
+      _showSnackBar('You are using the latest version (v${UpdateService.currentVersion})! 🎉');
+    }
+  }
+
+  void _showUpdateDialog(ReleaseInfo info) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _UpdateDialog(info: info),
+    );
   }
 
   Future<void> _handleIncomingSharedFile(String filePath) async {
@@ -315,6 +354,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             const Text('Smart PDF Compressor'),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update_alt_rounded),
+            tooltip: 'Check for Updates',
+            onPressed: _checkAppUpdateManually,
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -322,6 +368,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_availableUpdate != null && _availableUpdate!.hasUpdate) ...[
+                _buildUpdateBanner(theme, _availableUpdate!),
+                const SizedBox(height: 16),
+              ],
               _buildFileSection(theme),
               const SizedBox(height: 16),
               _buildTargetSizeSection(theme),
@@ -339,6 +389,49 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateBanner(ThemeData theme, ReleaseInfo info) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.new_releases_rounded, color: AppTheme.primaryColor, size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Update Available (v${info.tagName})',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                Text(
+                  info.title,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => _showUpdateDialog(info),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Update', style: TextStyle(fontSize: 12)),
+          ),
+        ],
       ),
     );
   }
@@ -818,6 +911,147 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             color: color,
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _UpdateDialog extends StatefulWidget {
+  final ReleaseInfo info;
+
+  const _UpdateDialog({required this.info});
+
+  @override
+  State<_UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<_UpdateDialog> {
+  bool _isDownloading = false;
+  double _downloadProgress = 0.0;
+  String _downloadStatus = '';
+
+  Future<void> _startUpdate() async {
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0.05;
+      _downloadStatus = 'Connecting to GitHub...';
+    });
+
+    final success = await UpdateService.downloadAndInstallApk(
+      widget.info.apkDownloadUrl,
+      (progress, status) {
+        if (mounted) {
+          setState(() {
+            _downloadProgress = progress;
+            _downloadStatus = status;
+          });
+        }
+      },
+    );
+
+    if (mounted) {
+      if (!success) {
+        setState(() {
+          _isDownloading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to download update. Please try again or download from GitHub.'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      } else {
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = widget.info;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.system_update_alt_rounded, color: AppTheme.primaryColor, size: 24),
+          ),
+          const SizedBox(width: 12),
+          const Text('New Update Available'),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Version: v${info.tagName}',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              info.title,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                info.notes,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade800),
+                maxLines: 6,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_isDownloading) ...[
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_downloadStatus, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  Text(
+                    '${(_downloadProgress * 100).toInt()}%',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.primaryColor),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: _downloadProgress,
+                  minHeight: 8,
+                  backgroundColor: Colors.grey.shade200,
+                  color: AppTheme.primaryColor,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        if (!_isDownloading) ...[
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Later'),
+          ),
+          ElevatedButton.icon(
+            onPressed: info.apkDownloadUrl.isNotEmpty ? _startUpdate : null,
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('Update Now'),
+          ),
+        ],
       ],
     );
   }
