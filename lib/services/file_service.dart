@@ -26,17 +26,30 @@ class FileService {
     }
   }
 
-  /// Shares the PDF file with other apps (WhatsApp, Gmail, Drive, etc.)
-  static Future<bool> sharePdf(String filePath, {String? text}) async {
+  /// Shares the PDF file with other apps (WhatsApp, Gmail, Drive, etc.) with custom name
+  static Future<bool> sharePdf(
+    String filePath, {
+    String? customName,
+    String? text,
+  }) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
         return false;
       }
 
-      final fileName = p.basename(filePath);
+      String sharePath = filePath;
+      if (customName != null && customName.trim().isNotEmpty) {
+        final cleanName = customName.endsWith('.pdf') ? customName.trim() : '${customName.trim()}.pdf';
+        final tempDir = await getTemporaryDirectory();
+        final renamedFile = File('${tempDir.path}/$cleanName');
+        await file.copy(renamedFile.path);
+        sharePath = renamedFile.path;
+      }
+
+      final fileName = p.basename(sharePath);
       final xFile = XFile(
-        filePath,
+        sharePath,
         mimeType: 'application/pdf',
         name: fileName,
       );
@@ -44,7 +57,7 @@ class FileService {
       final result = await SharePlus.instance.share(
         ShareParams(
           files: [xFile],
-          text: text ?? 'Compressed PDF Document',
+          text: text ?? 'Compressed PDF ($fileName)',
         ),
       );
 
@@ -54,7 +67,7 @@ class FileService {
     }
   }
 
-  /// Saves the compressed PDF to the device's public Downloads directory
+  /// Saves the compressed PDF to the device's public Downloads directory with a custom name
   static Future<String?> savePdfToDownloads(File sourceFile, String customName) async {
     try {
       if (!await sourceFile.exists()) {
@@ -75,7 +88,7 @@ class FileService {
         targetDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
       }
 
-      final cleanName = customName.endsWith('.pdf') ? customName : '$customName.pdf';
+      final cleanName = customName.endsWith('.pdf') ? customName.trim() : '${customName.trim()}.pdf';
       String destinationPath = '${targetDir.path}/$cleanName';
       int counter = 1;
       final nameWithoutExt = p.basenameWithoutExtension(cleanName);

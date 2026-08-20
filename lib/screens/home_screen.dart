@@ -24,6 +24,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _targetUnit = 'KB'; // 'KB' or 'MB'
   int _selectedPreset = 500; // KB
 
+  // Output filename configuration
+  final TextEditingController _fileNameController = TextEditingController();
+  bool _isFileNameEdited = false;
+
   // Compression state
   bool _isCompressing = false;
   double _compressionProgress = 0.0;
@@ -59,6 +63,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
+  void _updateDefaultFileName(String filePath) {
+    if (!_isFileNameEdited) {
+      final baseName = p.basenameWithoutExtension(filePath);
+      final targetKb = (_computedTargetSizeBytes / 1024).round();
+      _fileNameController.text = '${baseName}_compressed_${targetKb}kb';
+    }
+  }
+
   Future<void> _handleIncomingSharedFile(String filePath) async {
     final file = File(filePath);
     if (await file.exists()) {
@@ -70,9 +82,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _originalSizeBytes = size;
           _pageCount = pages;
           _lastResult = null;
+          _isFileNameEdited = false;
+          _updateDefaultFileName(filePath);
         });
         _animController.forward(from: 0.0);
-        _showSnackBar('Imported PDF from Share: ${p.basename(filePath)}');
+        _showSnackBar('Imported PDF: ${p.basename(filePath)}');
       }
     }
   }
@@ -80,6 +94,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _targetSizeController.dispose();
+    _fileNameController.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -92,6 +107,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return (val * 1024).round();
   }
 
+  String get _currentOutputName {
+    var name = _fileNameController.text.trim();
+    if (name.isEmpty) {
+      final base = _selectedFile != null
+          ? p.basenameWithoutExtension(_selectedFile!.path)
+          : 'document';
+      final targetKb = (_computedTargetSizeBytes / 1024).round();
+      name = '${base}_compressed_${targetKb}kb';
+    }
+    return name.endsWith('.pdf') ? name : '$name.pdf';
+  }
+
   Future<void> _pickFile() async {
     final file = await FileService.pickPdfFile();
     if (file != null && mounted) {
@@ -102,6 +129,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _originalSizeBytes = size;
         _pageCount = pages;
         _lastResult = null;
+        _isFileNameEdited = false;
+        _updateDefaultFileName(file.path);
       });
       _animController.forward(from: 0.0);
     }
@@ -169,11 +198,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       return;
     }
 
-    final baseName = p.basenameWithoutExtension(_selectedFile!.path);
-    final targetKb = (_computedTargetSizeBytes / 1024).round();
-    final fileName = '${baseName}_compressed_${targetKb}kb.pdf';
-
-    final savedPath = await FileService.savePdfToDownloads(_lastResult!.compressedFile, fileName);
+    final savedPath = await FileService.savePdfToDownloads(
+      _lastResult!.compressedFile,
+      _currentOutputName,
+    );
 
     if (savedPath != null) {
       _showSnackBar('Saved to Downloads: ${p.basename(savedPath)}');
@@ -190,6 +218,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     await FileService.sharePdf(
       _lastResult!.compressedFile.path,
+      customName: _currentOutputName,
       text: 'Compressed PDF (${_lastResult!.compressedSizeFormatted})',
     );
   }
@@ -202,8 +231,59 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     final success = await FileService.openPdf(_lastResult!.compressedFile.path);
     if (!success) {
-      await FileService.sharePdf(_lastResult!.compressedFile.path);
+      await FileService.sharePdf(
+        _lastResult!.compressedFile.path,
+        customName: _currentOutputName,
+      );
     }
+  }
+
+  void _showRenameDialog() {
+    final textEdit = TextEditingController(
+      text: p.basenameWithoutExtension(_currentOutputName),
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_rounded, color: AppTheme.primaryColor, size: 22),
+            SizedBox(width: 10),
+            Text('Rename Output PDF'),
+          ],
+        ),
+        content: TextField(
+          controller: textEdit,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'File Name',
+            suffixText: '.pdf',
+            hintText: 'Enter custom file name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newName = textEdit.text.trim();
+              if (newName.isNotEmpty) {
+                setState(() {
+                  _fileNameController.text = newName;
+                  _isFileNameEdited = true;
+                });
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save Name'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -249,8 +329,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildFileSection(theme),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               _buildTargetSizeSection(theme),
+              if (_selectedFile != null) ...[
+                const SizedBox(height: 16),
+                _buildFileNameSection(theme),
+              ],
               const SizedBox(height: 24),
               _buildActionButton(theme),
               if (_isCompressing) ...[
@@ -429,6 +513,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           _targetSizeController.text = kb.toString();
                           _targetUnit = 'KB';
                         }
+                        if (_selectedFile != null) {
+                          _updateDefaultFileName(_selectedFile!.path);
+                        }
                       });
                     }
                   },
@@ -460,6 +547,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     onChanged: (val) {
                       setState(() {
                         _selectedPreset = -1; // custom
+                        if (_selectedFile != null) {
+                          _updateDefaultFileName(_selectedFile!.path);
+                        }
                       });
                     },
                     decoration: const InputDecoration(
@@ -491,6 +581,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             setState(() {
                               _targetUnit = val;
                               _selectedPreset = -1;
+                              if (_selectedFile != null) {
+                                _updateDefaultFileName(_selectedFile!.path);
+                              }
                             });
                           }
                         },
@@ -499,6 +592,66 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFileNameSection(ThemeData theme) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.drive_file_rename_outline_rounded, size: 20, color: AppTheme.primaryColor),
+                    SizedBox(width: 8),
+                    Text(
+                      'Output File Name',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                  ],
+                ),
+                if (_isFileNameEdited)
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _isFileNameEdited = false;
+                        if (_selectedFile != null) {
+                          _updateDefaultFileName(_selectedFile!.path);
+                        }
+                      });
+                    },
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Reset', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _fileNameController,
+              onChanged: (val) {
+                _isFileNameEdited = true;
+              },
+              decoration: InputDecoration(
+                hintText: 'Enter output file name',
+                prefixIcon: const Icon(Icons.description_outlined, size: 20),
+                suffixText: '.pdf',
+                suffixStyle: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              ),
             ),
           ],
         ),
@@ -621,9 +774,39 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ],
             ),
 
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
+            // Custom Name Display & Inline Rename Trigger
+            InkWell(
+              onTap: _showRenameDialog,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.insert_drive_file_outlined, size: 18, color: AppTheme.primaryColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _currentOutputName,
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.edit_outlined, size: 16, color: AppTheme.primaryColor),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
             const Divider(height: 1),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
